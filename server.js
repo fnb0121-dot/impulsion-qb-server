@@ -1,4 +1,3 @@
-// server.js
 const express = require('express');
 const axios = require('axios');
 const qs = require('qs');
@@ -6,33 +5,34 @@ require('dotenv').config();
 
 const app = express();
 
-// Pull credentials from environment variables
 const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
 const redirectUri = process.env.REDIRECT_URI;
 
-// -----------------------
-// Step 1: Connect route
-// -----------------------
+// Store tokens and realmId in memory (you can later move to DB for persistence)
+let accessToken = null;
+let refreshToken = null;
+let realmId = null;
+
+// Route to start OAuth flow
 app.get('/connect', (req, res) => {
-  const state = Math.random().toString(36).substring(2); // generates a random state
+  const state = Math.random().toString(36).substring(2); // random state
   const authUrl = `https://appcenter.intuit.com/connect/oauth2?client_id=${clientId}&response_type=code&scope=com.intuit.quickbooks.accounting&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
-  
-  console.log("Authorization URL being sent to QuickBooks:", authUrl); // <--- debug line
+
+  console.log("Authorization URL being sent to QuickBooks:", authUrl);
   res.redirect(authUrl);
 });
 
-// -----------------------
-// Step 2: Callback route
-// -----------------------
+// Callback route for OAuth
 app.get('/callback', async (req, res) => {
   const code = req.query.code;
-  const realmId = req.query.realmId;
-  const tokenUrl = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
+  realmId = req.query.realmId;
 
-  if (!code) {
-    return res.status(400).send('No authorization code returned from QuickBooks');
+  if (!code || !realmId) {
+    return res.status(400).send("Missing code or realmId in callback.");
   }
+
+  const tokenUrl = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
 
   try {
     const response = await axios.post(
@@ -51,43 +51,44 @@ app.get('/callback', async (req, res) => {
       }
     );
 
-    const { access_token, refresh_token, expires_in } = response.data;
+    accessToken = response.data.access_token;
+    refreshToken = response.data.refresh_token;
 
-    // Log tokens (for debug; in production, store securely)
-    console.log('Access Token:', access_token);
-    console.log('Refresh Token:', refresh_token);
-    console.log('Token expires in (seconds):', expires_in);
-    console.log('Connected QuickBooks company ID (realmId):', realmId);
+    console.log("Access Token:", accessToken);
+    console.log("Refresh Token:", refreshToken);
+    console.log("Connected QuickBooks company ID (realmId):", realmId);
+    console.log("Token expires in (seconds):", response.data.expires_in);
 
     res.send('QuickBooks connected successfully! Check your terminal logs for tokens.');
   } catch (err) {
     console.error(err.response?.data || err.message);
-    res.status(500).send('Error connecting to QuickBooks. Check server logs.');
+    res.status(500).send('Error connecting to QuickBooks');
   }
 });
 
-// -----------------------
-// Step 3: Start server
-// -----------------------
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
-// Debug route to show exactly what /connect is sending
-app.get('/debug-connect', (req, res) => {
-  const state = Math.random().toString(36).substring(2); // random state
-  const encodedRedirect = encodeURIComponent(redirectUri);
-  const authUrl = `https://appcenter.intuit.com/connect/oauth2?client_id=${clientId}&response_type=code&scope=com.intuit.quickbooks.accounting&redirect_uri=${encodedRedirect}&state=${state}`;
-  
-  console.log("=== DEBUG CONNECT ===");
-  console.log("Client ID:", clientId);
-  console.log("Redirect URI from ENV:", redirectUri);
-  console.log("URL-encoded Redirect URI:", encodedRedirect);
-  console.log("Full Authorization URL being sent:", authUrl);
-  
-  res.send({
-    clientId,
-    redirectUri,
-    encodedRedirect,
-    authUrl
-  });
+// Safe /company route
+app.get('/company', async (req, res) => {
+  if (!accessToken || !realmId) {
+    return res.status(400).json({ error: "App not connected to QuickBooks yet. Go to /connect first." });
+  }
+
+  try {
+    const response = await axios.get(
+      `https://quickbooks.api.intuit.com/v3/company/${realmId}/companyinfo/${realmId}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Accept': 'application/json'
+        }
+      }
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    console.error("Company API error:", error.response?.data || error.message);
+    res.status(500).send("Company fetch failed.");
+  }
 });
 
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
