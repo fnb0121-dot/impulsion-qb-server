@@ -130,4 +130,25 @@ app.get('/company', ensureAccessToken, async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
+app.get('/profitloss', async (req, res) => {
+  try {
+    const realmId = process.env.REALM_ID; // your connected company ID
+    const token = process.env.ACCESS_TOKEN; // or fetch latest from stored tokens
+
+    const response = await axios.get(
+      `https://quickbooks.api.intuit.com/v3/company/${realmId}/reports/ProfitAndLoss?minorversion=65&date_macro=ThisFiscalYear`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+        },
+      }
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    console.error(error.response?.data || error.message);
+    res.status(500).send('Error fetching Profit & Loss report');
+  }
+});
 
