@@ -5,39 +5,36 @@ const qs = require('qs');
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-// Environment variables
+// Pull credentials from environment variables
 const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
-const redirectUri = process.env.REDIRECT_URI; // Must match QuickBooks Production app
+const redirectUri = process.env.REDIRECT_URI;
 
-// Simple in-memory token storage (replace with DB for production)
-let tokens = {};
-
-// Generate a random state for CSRF protection
-const generateState = () => Math.random().toString(36).substring(2, 15);
-
-// 1️⃣ Route to start OAuth
+// -----------------------
+// Step 1: Connect route
+// -----------------------
 app.get('/connect', (req, res) => {
-  const state = generateState();
-  tokens.state = state; // store state temporarily
-
+  const state = Math.random().toString(36).substring(2); // generates a random state
   const authUrl = `https://appcenter.intuit.com/connect/oauth2?client_id=${clientId}&response_type=code&scope=com.intuit.quickbooks.accounting&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
   
+  console.log("Authorization URL being sent to QuickBooks:", authUrl); // <--- debug line
   res.redirect(authUrl);
 });
 
-// 2️⃣ Callback route for QuickBooks to send authorization code
+// -----------------------
+// Step 2: Callback route
+// -----------------------
 app.get('/callback', async (req, res) => {
-  const { code, state } = req.query;
+  const code = req.query.code;
+  const realmId = req.query.realmId;
+  const tokenUrl = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
 
-  if (!code || !state || state !== tokens.state) {
-    return res.status(400).send('Invalid or missing authorization code/state');
+  if (!code) {
+    return res.status(400).send('No authorization code returned from QuickBooks');
   }
 
   try {
-    const tokenUrl = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
     const response = await axios.post(
       tokenUrl,
       qs.stringify({
@@ -46,59 +43,32 @@ app.get('/callback', async (req, res) => {
         redirect_uri: redirectUri
       }),
       {
-        auth: { username: clientId, password: clientSecret },
+        auth: {
+          username: clientId,
+          password: clientSecret
+        },
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       }
     );
 
-    tokens.accessToken = response.data.access_token;
-    tokens.refreshToken = response.data.refresh_token;
-    tokens.expiresIn = Date.now() + response.data.expires_in * 1000;
+    const { access_token, refresh_token, expires_in } = response.data;
 
-    console.log('Access Token:', tokens.accessToken);
-    console.log('Refresh Token:', tokens.refreshToken);
+    // Log tokens (for debug; in production, store securely)
+    console.log('Access Token:', access_token);
+    console.log('Refresh Token:', refresh_token);
+    console.log('Token expires in (seconds):', expires_in);
+    console.log('Connected QuickBooks company ID (realmId):', realmId);
 
-    res.send('QuickBooks connected successfully! Tokens stored.');
+    res.send('QuickBooks connected successfully! Check your terminal logs for tokens.');
   } catch (err) {
     console.error(err.response?.data || err.message);
-    res.status(500).send('Error connecting to QuickBooks. Check logs.');
+    res.status(500).send('Error connecting to QuickBooks. Check server logs.');
   }
 });
 
-// 3️⃣ Optional endpoint to refresh access token
-app.get('/refresh', async (req, res) => {
-  if (!tokens.refreshToken) return res.status(400).send('No refresh token available');
-
-  try {
-    const tokenUrl = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
-    const response = await axios.post(
-      tokenUrl,
-      qs.stringify({
-        grant_type: 'refresh_token',
-        refresh_token: tokens.refreshToken
-      }),
-      {
-        auth: { username: clientId, password: clientSecret },
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-      }
-    );
-
-    tokens.accessToken = response.data.access_token;
-    tokens.refreshToken = response.data.refresh_token;
-    tokens.expiresIn = Date.now() + response.data.expires_in * 1000;
-
-    console.log('Access Token refreshed:', tokens.accessToken);
-    res.send('Access token refreshed successfully.');
-  } catch (err) {
-    console.error(err.response?.data || err.message);
-    res.status(500).send('Error refreshing access token');
-  }
-});
-
-// 4️⃣ Optional homepage with link to connect
-app.get('/', (req, res) => {
-  res.send('<h2>Impulsion Financial Dashboard</h2><a href="/connect">Connect QuickBooks</a>');
-});
-
-// Start server
+// -----------------------
+// Step 3: Start server
+// -----------------------
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
+
