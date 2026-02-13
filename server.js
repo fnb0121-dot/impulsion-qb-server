@@ -9,14 +9,59 @@ const clientId = process.env.CLIENT_ID;
 const clientSecret = process.env.CLIENT_SECRET;
 const redirectUri = process.env.REDIRECT_URI;
 
-// Store tokens and realmId in memory (you can later move to DB for persistence)
+// Store tokens and realmId in memory
 let accessToken = null;
 let refreshToken = null;
 let realmId = null;
+let accessTokenExpiresAt = null;
+
+// Generate a random state string
+function generateState() {
+  return Math.random().toString(36).substring(2);
+}
+
+// Middleware to refresh access token if expired
+async function ensureAccessToken(req, res, next) {
+  if (!accessToken || !refreshToken) {
+    return res.status(400).json({ error: "Not connected to QuickBooks yet. Go to /connect first." });
+  }
+
+  const now = Date.now();
+  if (accessTokenExpiresAt && now < accessTokenExpiresAt - 60000) {
+    // Access token still valid
+    return next();
+  }
+
+  // Refresh access token
+  try {
+    const tokenUrl = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
+    const response = await axios.post(
+      tokenUrl,
+      qs.stringify({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken
+      }),
+      {
+        auth: { username: clientId, password: clientSecret },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      }
+    );
+
+    accessToken = response.data.access_token;
+    refreshToken = response.data.refresh_token; // Intuit can return a new refresh token
+    accessTokenExpiresAt = Date.now() + response.data.expires_in * 1000;
+
+    console.log("Access token refreshed");
+    next();
+  } catch (err) {
+    console.error("Error refreshing token:", err.response?.data || err.message);
+    return res.status(500).json({ error: "Failed to refresh access token" });
+  }
+}
 
 // Route to start OAuth flow
 app.get('/connect', (req, res) => {
-  const state = Math.random().toString(36).substring(2); // random state
+  const state = generateState();
   const authUrl = `https://appcenter.intuit.com/connect/oauth2?client_id=${clientId}&response_type=code&scope=com.intuit.quickbooks.accounting&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
 
   console.log("Authorization URL being sent to QuickBooks:", authUrl);
@@ -32,9 +77,8 @@ app.get('/callback', async (req, res) => {
     return res.status(400).send("Missing code or realmId in callback.");
   }
 
-  const tokenUrl = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
-
   try {
+    const tokenUrl = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
     const response = await axios.post(
       tokenUrl,
       qs.stringify({
@@ -43,16 +87,14 @@ app.get('/callback', async (req, res) => {
         redirect_uri: redirectUri
       }),
       {
-        auth: {
-          username: clientId,
-          password: clientSecret
-        },
+        auth: { username: clientId, password: clientSecret },
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
       }
     );
 
     accessToken = response.data.access_token;
     refreshToken = response.data.refresh_token;
+    accessTokenExpiresAt = Date.now() + response.data.expires_in * 1000;
 
     console.log("Access Token:", accessToken);
     console.log("Refresh Token:", refreshToken);
@@ -66,12 +108,8 @@ app.get('/callback', async (req, res) => {
   }
 });
 
-// Safe /company route
-app.get('/company', async (req, res) => {
-  if (!accessToken || !realmId) {
-    return res.status(400).json({ error: "App not connected to QuickBooks yet. Go to /connect first." });
-  }
-
+// Company route with token refresh
+app.get('/company', ensureAccessToken, async (req, res) => {
   try {
     const response = await axios.get(
       `https://quickbooks.api.intuit.com/v3/company/${realmId}/companyinfo/${realmId}`,
@@ -92,3 +130,4 @@ app.get('/company', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
+
