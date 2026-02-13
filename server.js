@@ -71,4 +71,23 @@ app.get('/callback', async (req, res) => {
 // -----------------------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
+// Debug route to show exactly what /connect is sending
+app.get('/debug-connect', (req, res) => {
+  const state = Math.random().toString(36).substring(2); // random state
+  const encodedRedirect = encodeURIComponent(redirectUri);
+  const authUrl = `https://appcenter.intuit.com/connect/oauth2?client_id=${clientId}&response_type=code&scope=com.intuit.quickbooks.accounting&redirect_uri=${encodedRedirect}&state=${state}`;
+  
+  console.log("=== DEBUG CONNECT ===");
+  console.log("Client ID:", clientId);
+  console.log("Redirect URI from ENV:", redirectUri);
+  console.log("URL-encoded Redirect URI:", encodedRedirect);
+  console.log("Full Authorization URL being sent:", authUrl);
+  
+  res.send({
+    clientId,
+    redirectUri,
+    encodedRedirect,
+    authUrl
+  });
+});
 
