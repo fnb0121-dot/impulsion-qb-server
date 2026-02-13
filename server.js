@@ -151,4 +151,58 @@ app.get('/profitloss', async (req, res) => {
     res.status(500).send('Error fetching Profit & Loss report');
   }
 });
+// -----------------------------
+// QuickBooks Profit & Loss Route with Automatic Token Refresh
+// -----------------------------
+
+const refreshAccessToken = async () => {
+  const tokenUrl = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
+  const auth = Buffer.from(`${process.env.CLIENT_ID}:${process.env.CLIENT_SECRET}`).toString('base64');
+
+  try {
+    const response = await axios.post(
+      tokenUrl,
+      'grant_type=refresh_token&refresh_token=' + process.env.REFRESH_TOKEN,
+      {
+        headers: {
+          Authorization: `Basic ${auth}`,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
+      }
+    );
+
+    // Update environment variables with new tokens
+    process.env.ACCESS_TOKEN = response.data.access_token;
+    process.env.REFRESH_TOKEN = response.data.refresh_token; 
+
+    console.log('Access token refreshed successfully');
+    return response.data.access_token;
+  } catch (error) {
+    console.error('Error refreshing access token:', error.response?.data || error.message);
+    throw error;
+  }
+};
+
+app.get('/profitloss', async (req, res) => {
+  try {
+    // Always get the latest access token
+    const token = await refreshAccessToken();
+
+    const realmId = process.env.REALM_ID;
+    const response = await axios.get(
+      `https://quickbooks.api.intuit.com/v3/company/${realmId}/reports/ProfitAndLoss?minorversion=65&date_macro=ThisFiscalYear`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+        },
+      }
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    console.error('Error fetching Profit & Loss report:', error.response?.data || error.message);
+    res.status(500).send('Error fetching Profit & Loss report');
+  }
+});
 
