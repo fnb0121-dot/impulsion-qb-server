@@ -35,3 +35,27 @@ app.get('/callback', async (req, res) => {
           username: clientId,
           password: clientSecret
         },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      }
+    );
+
+    const { access_token, refresh_token } = response.data;
+
+    console.log('Access Token:', access_token);
+    console.log('Refresh Token:', refresh_token);
+
+    res.send('QuickBooks connected successfully! Check your terminal logs.');
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    res.send('Error connecting to QuickBooks');
+  }
+});
+
+// Homepage with Connect QuickBooks link
+app.get('/', (req, res) => {
+  res.send('<h2>Impulsion Financial Dashboard</h2><a href="/connect">Connect QuickBooks</a>');
+});
+
+// Start server
+app.listen(PORT, () => console.log(`Server running at http://localhost:${PORT}`));
+
