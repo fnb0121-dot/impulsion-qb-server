@@ -15,7 +15,7 @@ const CLIENT_SECRET = process.env.CLIENT_SECRET;
 const REDIRECT_URI = process.env.REDIRECT_URI;
 const REALM_ID = process.env.REALM_ID;
 
-// Store tokens in memory for simplicity (Render Environment Variables recommended)
+// Store tokens in memory (or update Render Environment Variables)
 let ACCESS_TOKEN = process.env.ACCESS_TOKEN || '';
 let REFRESH_TOKEN = process.env.REFRESH_TOKEN || '';
 
@@ -134,10 +134,10 @@ app.get('/company', async (req, res) => {
 
 // --- Get Profit & Loss ---
 app.get('/profitloss', async (req, res) => {
-  const data = await quickbooksGet(
-    `https://quickbooks.api.intuit.com/v3/company/${REALM_ID}/reports/ProfitAndLoss?minorversion=65&date_macro=ThisFiscalYearToDate`
-  );
-});
+  try {
+    const data = await quickbooksGet(
+      `https://quickbooks.api.intuit.com/v3/company/${REALM_ID}/reports/ProfitAndLoss?minorversion=65&date_macro=ThisFiscalYearToDate`
+    );
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: 'Error fetching Profit & Loss report', details: err.response?.data || err.message });
