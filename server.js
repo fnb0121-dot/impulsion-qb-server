@@ -15,7 +15,7 @@ const CLIENT_SECRET = process.env.CLIENT_SECRET;
 const REDIRECT_URI = process.env.REDIRECT_URI;
 const REALM_ID = process.env.REALM_ID;
 
-// Store tokens in memory (or update Render Environment Variables)
+// Store tokens in memory
 let ACCESS_TOKEN = process.env.ACCESS_TOKEN || '';
 let REFRESH_TOKEN = process.env.REFRESH_TOKEN || '';
 
@@ -132,11 +132,15 @@ app.get('/company', async (req, res) => {
   }
 });
 
-// --- Get Profit & Loss ---
+// --- Get Profit & Loss Report (dynamic date range) ---
 app.get('/profitloss', async (req, res) => {
   try {
+    // Example: Year-to-date report
+    const startDate = '2026-01-01'; // change to desired start
+    const endDate = new Date().toISOString().slice(0, 10); // today YYYY-MM-DD
+
     const data = await quickbooksGet(
-      `https://quickbooks.api.intuit.com/v3/company/${REALM_ID}/reports/ProfitAndLoss?minorversion=65&date_macro=ThisYear`
+      `https://quickbooks.api.intuit.com/v3/company/${REALM_ID}/reports/ProfitAndLoss?minorversion=65&start_date=${startDate}&end_date=${endDate}`
     );
     res.json(data);
   } catch (err) {
