@@ -1,125 +1,119 @@
-const cors = require('cors');
-app.use(cors()); // allow all origins
-require('dotenv').config();
+// server.js
 const express = require('express');
+const cors = require('cors');
 const axios = require('axios');
-const qs = require('querystring');
+require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+app.use(cors()); // allow cross-origin requests from GHL
+app.use(express.json());
 
-// Store tokens in memory
-let accessToken = process.env.ACCESS_TOKEN || null;
-let refreshToken = process.env.REFRESH_TOKEN || null;
-let realmId = process.env.REALM_ID || null;
+// Environment variables
+const clientId = process.env.CLIENT_ID;
+const clientSecret = process.env.CLIENT_SECRET;
+const redirectUri = process.env.REDIRECT_URI;
+const realmId = process.env.REALM_ID;
+let accessToken = process.env.ACCESS_TOKEN; // update after OAuth
+let refreshToken = process.env.REFRESH_TOKEN;
 
-/* ===============================
-   CONNECT TO QUICKBOOKS
-================================ */
+// --------------------
+// OAuth2 Connect Route
+// --------------------
 app.get('/connect', (req, res) => {
-  const authUrl = `https://appcenter.intuit.com/connect/oauth2?` +
-    qs.stringify({
-      client_id: process.env.CLIENT_ID,
-      response_type: 'code',
-      scope: 'com.intuit.quickbooks.accounting',
-      redirect_uri: process.env.REDIRECT_URI,
-      state: 'random_state'
-    });
+  const state = Math.random().toString(36).substring(2);
+  const authUrl = `https://appcenter.intuit.com/connect/oauth2?client_id=${clientId}&response_type=code&scope=com.intuit.quickbooks.accounting&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
 
-  console.log("Redirecting to QuickBooks:", authUrl);
+  console.log("Authorization URL being sent to QuickBooks:", authUrl);
   res.redirect(authUrl);
 });
 
-/* ===============================
-   CALLBACK FROM QUICKBOOKS
-================================ */
+// --------------------
+// OAuth2 Callback Route
+// --------------------
 app.get('/callback', async (req, res) => {
-  try {
-    const authCode = req.query.code;
-    realmId = req.query.realmId;
+  const { code } = req.query;
+  if (!code) return res.status(400).send("Missing authorization code");
 
-    const tokenResponse = await axios.post(
-      'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
-      qs.stringify({
+  try {
+    const tokenResponse = await axios({
+      method: 'post',
+      url: 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+      },
+      auth: {
+        username: clientId,
+        password: clientSecret,
+      },
+      data: new URLSearchParams({
         grant_type: 'authorization_code',
-        code: authCode,
-        redirect_uri: process.env.REDIRECT_URI
-      }),
-      {
-        headers: {
-          'Authorization': 'Basic ' + Buffer.from(
-            `${process.env.CLIENT_ID}:${process.env.CLIENT_SECRET}`
-          ).toString('base64'),
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
-      }
-    );
+        code: code,
+        redirect_uri: redirectUri,
+      }).toString(),
+    });
 
     accessToken = tokenResponse.data.access_token;
     refreshToken = tokenResponse.data.refresh_token;
 
+    console.log("Connected successfully. You can now use /company or /profitloss");
     console.log("ACCESS TOKEN:", accessToken);
     console.log("REFRESH TOKEN:", refreshToken);
-    console.log("REALM ID:", realmId);
+    console.log("Connected QuickBooks company ID (realmId):", realmId);
 
-    res.send('QuickBooks connected successfully. You can now use /company or /profitloss');
-  } catch (error) {
-    console.error("Callback Error:", error.response?.data || error.message);
-    res.status(500).send('OAuth Error');
+    res.send("QuickBooks connected successfully! Check your terminal logs for tokens.");
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    res.status(500).send("Error exchanging authorization code for tokens");
   }
 });
 
-/* ===============================
-   COMPANY INFO
-================================ */
+// --------------------
+// Company Info Route
+// --------------------
 app.get('/company', async (req, res) => {
   try {
     const response = await axios.get(
-      `https://quickbooks.api.intuit.com/v3/company/${realmId}/companyinfo/${realmId}?minorversion=65`,
+      `https://quickbooks.api.intuit.com/v3/company/${realmId}/companyinfo/${realmId}`,
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/json'
-        }
+          Accept: 'application/json',
+        },
       }
     );
-
     res.json(response.data);
-  } catch (error) {
-    console.error("Company Error:", error.response?.data || error.message);
-    res.status(500).send('Error fetching company info');
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    res.status(500).send("Error fetching company info");
   }
 });
 
-/* ===============================
-   PROFIT & LOSS REPORT
-================================ */
+// --------------------
+// Profit & Loss Route
+// --------------------
 app.get('/profitloss', async (req, res) => {
   try {
-    // Explicit start and end dates
-    const startDate = '2026-01-01';
-    const endDate = '2026-12-31';
-
     const response = await axios.get(
-      `https://quickbooks.api.intuit.com/v3/company/${realmId}/reports/ProfitAndLoss?start_date=${startDate}&end_date=${endDate}&minorversion=65`,
+      `https://quickbooks.api.intuit.com/v3/company/${realmId}/reports/ProfitAndLoss?minorversion=65&date_macro=ThisFiscalYear`,
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/json'
-        }
+          Accept: 'application/json',
+        },
       }
     );
-
     res.json(response.data);
-  } catch (error) {
-    console.error("Profit & Loss FULL ERROR:", error.response?.data || error.message);
-    res.status(500).send('Error fetching Profit & Loss report');
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    res.status(500).send("Error fetching Profit & Loss report");
   }
 });
 
-/* ===============================
-   START SERVER
-================================ */
+// --------------------
+// Start Server
+// --------------------
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
