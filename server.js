@@ -2,156 +2,150 @@
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
-const dotenv = require('dotenv');
-const fs = require('fs');
-const querystring = require('querystring');
-const app = express();
+require('dotenv').config();
+const qs = require('qs');
 
-dotenv.config();
+const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 10000;
-
-// ---- Load tokens from .env ----
-let accessToken = process.env.ACCESS_TOKEN || '';
-let refreshToken = process.env.REFRESH_TOKEN || '';
+// --- Environment variables ---
+const CLIENT_ID = process.env.CLIENT_ID;
+const CLIENT_SECRET = process.env.CLIENT_SECRET;
+const REDIRECT_URI = process.env.REDIRECT_URI;
 const REALM_ID = process.env.REALM_ID;
 
-// ---- Helper: save tokens to .env ----
-function saveTokensToEnv(newAccessToken, newRefreshToken) {
-  let envContent = fs.readFileSync('.env', 'utf-8');
+// Store tokens in memory for simplicity (Render Environment Variables recommended)
+let ACCESS_TOKEN = process.env.ACCESS_TOKEN || '';
+let REFRESH_TOKEN = process.env.REFRESH_TOKEN || '';
 
-  if (envContent.includes('ACCESS_TOKEN=')) {
-    envContent = envContent.replace(/ACCESS_TOKEN=.*/g, `ACCESS_TOKEN=${newAccessToken}`);
-  } else {
-    envContent += `\nACCESS_TOKEN=${newAccessToken}`;
-  }
-
-  if (envContent.includes('REFRESH_TOKEN=')) {
-    envContent = envContent.replace(/REFRESH_TOKEN=.*/g, `REFRESH_TOKEN=${newRefreshToken}`);
-  } else {
-    envContent += `\nREFRESH_TOKEN=${newRefreshToken}`;
-  }
-
-  fs.writeFileSync('.env', envContent);
-}
-
-// ---- OAuth connect route ----
+// --- OAuth Connect ---
 app.get('/connect', (req, res) => {
-  const state = Math.random().toString(36).substring(2);
-  const authUrl = `https://appcenter.intuit.com/connect/oauth2?client_id=${process.env.CLIENT_ID}&response_type=code&scope=com.intuit.quickbooks.accounting&redirect_uri=${encodeURIComponent(process.env.REDIRECT_URI)}&state=${state}`;
-  console.log("Authorization URL being sent to QuickBooks:", authUrl);
+  const authUrl = `https://appcenter.intuit.com/connect/oauth2?client_id=${CLIENT_ID}&response_type=code&scope=com.intuit.quickbooks.accounting&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&state=xyz123`;
   res.redirect(authUrl);
 });
 
-// ---- OAuth callback route ----
+// --- OAuth Callback ---
 app.get('/callback', async (req, res) => {
   const { code } = req.query;
-  if (!code) return res.status(400).send("No code returned from QuickBooks.");
+  if (!code) return res.status(400).send('No code returned');
 
   try {
     const tokenResponse = await axios.post(
       'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
-      querystring.stringify({
+      qs.stringify({
         grant_type: 'authorization_code',
         code,
-        redirect_uri: process.env.REDIRECT_URI
+        redirect_uri: REDIRECT_URI
       }),
       {
-        auth: {
-          username: process.env.CLIENT_ID,
-          password: process.env.CLIENT_SECRET
-        },
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization: 'Basic ' + Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')
+        }
       }
     );
 
-    accessToken = tokenResponse.data.access_token;
-    refreshToken = tokenResponse.data.refresh_token;
+    ACCESS_TOKEN = tokenResponse.data.access_token;
+    REFRESH_TOKEN = tokenResponse.data.refresh_token;
 
-    saveTokensToEnv(accessToken, refreshToken);
+    console.log('QuickBooks connected successfully!');
+    console.log('Access Token:', ACCESS_TOKEN);
+    console.log('Refresh Token:', REFRESH_TOKEN);
 
-    console.log("QuickBooks connected successfully!");
-    console.log("Access Token:", accessToken);
-    console.log("Refresh Token:", refreshToken);
-
-    res.send("Connected successfully. You can now use /company or /profitloss");
+    res.send('Connected successfully. You can now use /company or /profitloss');
   } catch (err) {
-    console.error(err.response?.data || err.message);
-    res.status(500).send("Error exchanging code for tokens");
+    console.error('Error during /callback:', err.response?.data || err.message);
+    res.status(500).send('Error connecting QuickBooks');
   }
 });
 
-// ---- Helper: refresh access token if needed ----
-async function getAccessToken() {
-  if (!accessToken) throw new Error("No access token available. Connect first via /connect");
+// --- Refresh token helper ---
+async function refreshAccessToken() {
+  if (!REFRESH_TOKEN) throw new Error('No refresh token available');
 
   try {
-    // Refresh token with QuickBooks
     const response = await axios.post(
       'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
-      querystring.stringify({
+      qs.stringify({
         grant_type: 'refresh_token',
-        refresh_token: refreshToken
+        refresh_token: REFRESH_TOKEN
       }),
       {
-        auth: {
-          username: process.env.CLIENT_ID,
-          password: process.env.CLIENT_SECRET
-        },
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization: 'Basic ' + Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')
+        }
       }
     );
 
-    accessToken = response.data.access_token;
-    refreshToken = response.data.refresh_token;
+    ACCESS_TOKEN = response.data.access_token;
+    REFRESH_TOKEN = response.data.refresh_token;
 
-    saveTokensToEnv(accessToken, refreshToken);
-    console.log("Access token refreshed");
-
-    return accessToken;
+    console.log('Access token refreshed');
   } catch (err) {
-    console.error("Error refreshing access token:", err.response?.data || err.message);
+    console.error('Error refreshing token:', err.response?.data || err.message);
     throw err;
   }
 }
 
-// ---- Company info route ----
+// --- QuickBooks API request helper ---
+async function quickbooksGet(url) {
+  if (!ACCESS_TOKEN) {
+    throw new Error('No access token available. Connect first via /connect');
+  }
+
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${ACCESS_TOKEN}`,
+        Accept: 'application/json'
+      }
+    });
+    return response.data;
+  } catch (err) {
+    // If token expired, refresh and retry
+    if (err.response?.status === 401) {
+      console.log('Access token expired, refreshing...');
+      await refreshAccessToken();
+      const retry = await axios.get(url, {
+        headers: {
+          Authorization: `Bearer ${ACCESS_TOKEN}`,
+          Accept: 'application/json'
+        }
+      });
+      return retry.data;
+    } else {
+      console.error('QuickBooks API error:', err.response?.data || err.message);
+      throw err;
+    }
+  }
+}
+
+// --- Get Company Info ---
 app.get('/company', async (req, res) => {
   try {
-    const token = await getAccessToken();
-
-    const response = await axios.get(
-      `https://quickbooks.api.intuit.com/v3/company/${REALM_ID}/companyinfo/${REALM_ID}`,
-      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
-    );
-
-    res.json(response.data);
+    const data = await quickbooksGet(`https://quickbooks.api.intuit.com/v3/company/${REALM_ID}/companyinfo/${REALM_ID}`);
+    res.json(data);
   } catch (err) {
-    console.error(err.response?.data || err.message);
-    res.status(500).send("Error fetching company info");
+    res.status(500).json({ error: 'Error fetching company info', details: err.response?.data || err.message });
   }
 });
 
-// ---- Profit & Loss route ----
+// --- Get Profit & Loss ---
 app.get('/profitloss', async (req, res) => {
   try {
-    const token = await getAccessToken();
-
-    const response = await axios.get(
-      `https://quickbooks.api.intuit.com/v3/company/${REALM_ID}/reports/ProfitAndLoss?minorversion=65&date_macro=ThisFiscalYear`,
-      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
+    const data = await quickbooksGet(
+      `https://quickbooks.api.intuit.com/v3/company/${REALM_ID}/reports/ProfitAndLoss?minorversion=65&date_macro=ThisFiscalYear`
     );
-
-    res.json(response.data);
+    res.json(data);
   } catch (err) {
-    console.error(err.response?.data || err.message);
-    res.status(500).send("Error fetching Profit & Loss report");
+    res.status(500).json({ error: 'Error fetching Profit & Loss report', details: err.response?.data || err.message });
   }
 });
 
-// ---- Start server ----
+// --- Start server ---
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
