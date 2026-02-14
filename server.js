@@ -136,7 +136,7 @@ app.get('/company', async (req, res) => {
 app.get('/profitloss', async (req, res) => {
   try {
     const data = await quickbooksGet(
-      `https://quickbooks.api.intuit.com/v3/company/${REALM_ID}/reports/ProfitAndLoss?minorversion=65&date_macro=ThisFiscalYearToDate`
+      `https://quickbooks.api.intuit.com/v3/company/${REALM_ID}/reports/ProfitAndLoss?minorversion=65&date_macro=ThisYear`
     );
     res.json(data);
   } catch (err) {
